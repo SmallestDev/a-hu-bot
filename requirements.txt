@@ -3,7 +3,6 @@ discord.py[voice]>=2.7.1     # PyNaCl 포함. 2.7 이상에서 DAVE(음성 E2EE)
 davey>=0.1.4                 # DAVE 프로토콜 구현 (discord.py 가 사용)
 numpy>=1.26
 python-dotenv>=1.0
-discord-ext-voice-recv       # 비공식 음성 수신 확장 (업스트림 PyPI 판은 DAVE 복호화 미포함일 수 있음 → README 참고)
-
+discord-ext-voice-recv @ git+https://github.com/jstewart0788/discord-ext-voice-recv-dave.git@4cbbec2
 # --- 개발/테스트 ---
 pytest>=8.0
