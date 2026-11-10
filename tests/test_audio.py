@@ -7,7 +7,7 @@ import pytest
 
 from src.audio.buffer import Frame, VoiceBuffer
 from src.audio.exporter import ExportError, FileTooLargeError, export_clip, write_wav
-from src.audio.mixer import mix
+from src.audio.mixer import CEILING, FADE, mix
 from src.config import CHANNELS, SAMPLE_RATE
 from tests.conftest import FRAME_SAMPLES, make_pcm
 
@@ -37,7 +37,9 @@ def test_window_extracts_only_requested_range():
     assert 49 <= len(frames) <= 51
     samples = mix({1: frames}, 2.0, 3.0)
     assert len(samples) == SAMPLE_RATE
-    assert (samples == 100).all()
+    # 전체 구간이 연속 커버되므로 경계 2ms 페이드 구간을 뺀 중간은 원본 그대로
+    edge = min(FADE, len(samples) // 2)
+    assert (samples[edge:-edge, 0] == 100).all()
 
 
 def test_window_empty_when_out_of_range():
@@ -48,25 +50,37 @@ def test_window_empty_when_out_of_range():
 
 # 3. 타임스탬프 믹싱 -----------------------------------------------------------
 def test_mix_places_frames_at_timestamps_with_gap_and_overlap():
-    a = [Frame(0.00, make_pcm(1000)), Frame(0.02, make_pcm(1000))]  # 0~40ms
-    b = [Frame(0.02, make_pcm(500)), Frame(0.10, make_pcm(300))]    # 20~40ms 겹침, 100~120ms
-    out = mix({1: a, 2: b}, 0.0, 0.12)
-    assert len(out) == int(0.12 * SAMPLE_RATE)
-    assert (out[0:FRAME_SAMPLES] == 1000).all()                              # A 단독
-    assert (out[FRAME_SAMPLES:2 * FRAME_SAMPLES] == 1500).all()              # 겹침 합산
-    assert (out[2 * FRAME_SAMPLES:int(0.10 * SAMPLE_RATE)] == 0).all()       # 무음 구간 보존
-    assert (out[int(0.10 * SAMPLE_RATE):] == 300).all()                       # 순서 보존
+    # 연속 세그먼트를 길게 잡아 페이드 구간(경계 2ms) 바깥의 steady 상태를 검증한다.
+    a = [Frame(t, make_pcm(1000)) for t in (0.00, 0.02, 0.04, 0.06)]          # user1: 0~80ms
+    b = [Frame(t, make_pcm(300)) for t in (0.10, 0.12, 0.14)]                 # user2: 100~160ms
+    out = mix({1: a, 2: b}, 0.0, 0.18)
+    assert len(out) == int(0.18 * SAMPLE_RATE)
+    # user1 단독 구간(20~40ms, 페이드 바깥)
+    assert (out[int(0.02 * SAMPLE_RATE):int(0.04 * SAMPLE_RATE), 0] == 1000).all()
+    # 구간 사이 무음 보존(80~100ms)
+    assert (out[int(0.08 * SAMPLE_RATE):int(0.10 * SAMPLE_RATE)] == 0).all()
+    # user2 단독 구간 steady(120~140ms, 페이드 바깥)
+    assert (out[int(0.12 * SAMPLE_RATE):int(0.14 * SAMPLE_RATE), 0] == 300).all()
+    # 경계에서는 페이드로 0 에 수렴
+    assert out[0, 0] == 0 and out[-1, 0] == 0
 
 
-def test_mix_clips_instead_of_wrapping():
+def test_mix_loud_overlap_is_scaled_not_wrapped():
+    """두 큰 목소리가 겹쳐도 int16 래핑(음수 뒤집힘) 없이 전체 믹스가 천장 이하로 축소된다."""
     out = mix({1: [Frame(0, make_pcm(30000))], 2: [Frame(0, make_pcm(30000))]}, 0.0, 0.02)
-    assert (out == 32767).all()
+    assert np.abs(out.astype(np.int32)).max() <= CEILING + 1
+    assert out.min() >= 0  # 양수 입력만 있으므로 음수 래핑 발생 안 함
+    # 중간 steady 값 = 30000+30000 을 헤드룸 비율(CEILING/60000)로 축소한 값 = CEILING
+    mid = int(FRAME_SAMPLES // 2)
+    assert abs(int(out[mid, 0]) - int(CEILING)) < 3
 
 
 def test_mix_trims_frames_crossing_boundaries():
-    out = mix({1: [Frame(-0.01, make_pcm(700))]}, 0.0, 0.02)  # 앞 10ms 가 구간 밖
-    assert (out[:FRAME_SAMPLES // 2] == 700).all()
-    assert (out[FRAME_SAMPLES // 2:] == 0).all()
+    # 프레임이 구간 시작 10ms 전에 걸침: 구간 안쪽(0~10ms)만 채워지고 경계 페이드 적용
+    out = mix({1: [Frame(-0.01, make_pcm(700))]}, 0.0, 0.02)
+    assert out.max() == 700
+    assert out[int(0.005 * SAMPLE_RATE), 0] == 700  # 페이드 접점(5ms)에서 최대치
+    assert (out[int(0.01 * SAMPLE_RATE):] == 0).all()  # 10ms 이후 무음
 
 
 def test_mix_rejects_bad_range():
@@ -108,7 +122,7 @@ def test_write_wav_valid(tmp_path):
         assert (w.getnchannels(), w.getsampwidth(), w.getframerate()) == (CHANNELS, 2, SAMPLE_RATE)
         assert w.getnframes() == len(samples)
         data = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2")
-    assert (data[: FRAME_SAMPLES * CHANNELS] == 1234).all()
+    assert data.max() == 1234            # 페이드 접점에서 원본 최대치 도달
     assert not list(tmp_path.glob("*.part"))
 
 

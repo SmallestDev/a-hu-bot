@@ -1,8 +1,8 @@
-"""소리 깨짐 방지(리미터, 틈 보간, 덮어쓰기, 음량 균일화)와 사운드보드 소리 버퍼링 테스트."""
+"""안전 믹싱 테스트: 단순 합산 + 단일 헤드룸 게인, 사람별 볼륨 보정 없음."""
 import numpy as np
 
 from src.audio.buffer import Frame, VoiceBuffer, effect_key
-from src.audio.mixer import CEILING, clipped_ratio, limit, mix
+from src.audio.mixer import CEILING, clipped_ratio, mix
 from src.audio.receiver import FrameCollector
 from src.config import CHANNELS, SAMPLE_RATE
 from src.database.db import ConsentStore
@@ -26,44 +26,43 @@ def rms(a):
     return float(np.sqrt(np.mean(a.astype(np.float64) ** 2)))
 
 
-def test_limiter_never_exceeds_ceiling():
-    x = np.zeros((SAMPLE_RATE, CHANNELS), np.float32)
-    x[10000:10500] = 60000  # 한계를 훌쩍 넘는 구간
-    y = limit(x)
-    assert np.abs(y).max() <= CEILING + 1
+def test_headroom_keeps_peak_under_ceiling():
+    """큰 목소리가 겹쳐도 전체 믹스에 단일 헤드룸 게인을 걸어 천장을 넘지 않는다."""
+    out = mix({1: sine_frames(30000, 50), 2: sine_frames(30000, 50, freq=330)}, 0.0, 1.0)
+    assert np.abs(out.astype(np.int32)).max() <= CEILING + 1
 
 
-def test_limiter_leaves_quiet_audio_untouched():
-    x = (np.random.default_rng(0).normal(0, 2000, (SAMPLE_RATE, CHANNELS))).astype(np.float32)
-    assert np.array_equal(limit(x), x)
+def test_quiet_audio_passthrough_unchanged():
+    """천장을 넘지 않는 음원은 게인 변형 없이 그대로 통과한다(사람별 보정 없음)."""
+    frames = run_frames(1000, 5)
+    out = mix({1: frames}, 0.0, 0.1)
+    middle = int(0.02 * SAMPLE_RATE)  # 페이드 구간(2ms) 이후
+    assert (out[middle:-middle, 0] == 1000).all()
 
 
-def test_loud_overlap_is_limited_not_hard_clipped():
-    out = mix({1: sine_frames(30000, 50), 2: sine_frames(30000, 50, freq=330)}, 0.0, 1.0,
-              normalize=True, target_rms=20000)
+def test_loud_overlap_scaled_not_hard_clipped():
+    """겹침 시 전체 믹스가 비례 축소되며, 평평하게 잘린 구간이 없어야 한다."""
+    out = mix({1: sine_frames(32000, 50), 2: sine_frames(32000, 50, freq=330)}, 0.0, 1.0)
     assert np.abs(out.astype(np.int32)).max() <= CEILING + 2
-    # 평평하게 잘린(연속 같은 값) 구간이 없어야 한다
-    flat = np.count_nonzero(np.abs(np.diff(out[:, 0].astype(np.int32))) == 0)
-    assert flat < 50
-
-
-def test_gain_changes_are_smooth():
-    out = mix({1: sine_frames(32000, 50), 2: sine_frames(32000, 50, freq=330)}, 0.0, 1.0,
-              normalize=True, target_rms=22000)
-    d = np.abs(np.diff(out[2000:-2000, 0].astype(np.int32)))
-    assert d.max() < 9000  # 한 샘플 사이에 급격히 튀지 않는다
+    # 하드 클리핑은 동일 값이 길게続く 플래토를 만든다; 안전 믹싱은 그런 플래토가 없어야 한다
+    same = np.abs(np.diff(out[:, 0].astype(np.int32))) == 0
+    padded = np.concatenate(([0], same.astype(np.int8), [0]))
+    d = np.diff(padded)
+    runs = np.where(d == 1)[0], np.where(d == -1)[0]
+    max_run = int((runs[1] - runs[0]).max()) if len(runs[0]) else 0
+    assert max_run < 5
 
 
 def test_short_gap_is_interpolated_without_dropout():
     a = [Frame(0.0, make_pcm(1000)), Frame(0.02 + 0.0005, make_pcm(1000))]  # 0.5ms 틈
-    out = mix({1: a}, 0.0, 0.05, normalize=True, target_rms=1000)
+    out = mix({1: a}, 0.0, 0.05)
     mid = out[300:int(0.04 * SAMPLE_RATE) - 300, 0]
     assert (mid == 1000).all()
 
 
 def test_long_gap_edges_are_faded():
     a = [Frame(0.0, make_pcm(8000)), Frame(0.1, make_pcm(8000))]
-    out = mix({1: a}, 0.0, 0.2, normalize=True, target_rms=8000)
+    out = mix({1: a}, 0.0, 0.2)
     end_of_first = FRAME_SAMPLES
     assert abs(int(out[end_of_first - 1, 0])) < 400  # 끝이 0 으로 내려온다
     assert abs(int(out[0, 0])) < 400                  # 시작도 페이드 인
@@ -71,33 +70,22 @@ def test_long_gap_edges_are_faded():
 
 def test_same_user_overlap_overwrites_instead_of_doubling():
     dup = [Frame(0.0, make_pcm(1000)), Frame(0.0, make_pcm(1000)), Frame(0.01, make_pcm(1000))]
-    out = mix({1: dup}, 0.0, 0.03, normalize=True, target_rms=1000)
+    out = mix({1: dup}, 0.0, 0.03)
     assert out[500:1000, 0].max() == 1000
 
 
-def test_normalize_evens_out_loud_and_quiet_speakers():
+def test_no_per_person_equalization():
+    """사람별 RMS 를 맞추지 않음: 큰 목소리와 작은 목소리의 상대 음량 관계가 그대로 유지된다."""
     quiet = sine_frames(700, 100, freq=200)
     loud = sine_frames(14000, 100, freq=300)
-    q = mix({1: quiet}, 0.0, 2.0, normalize=True)
-    l = mix({2: loud}, 0.0, 2.0, normalize=True)
+    q = mix({1: quiet}, 0.0, 2.0)
+    l = mix({2: loud}, 0.0, 2.0)
     ratio = rms(l[2000:-2000]) / rms(q[2000:-2000])
-    assert 0.8 < ratio < 1.25
-    # 정규화하지 않으면 격차가 그대로
-    q0 = mix({1: quiet}, 0.0, 2.0)
-    l0 = mix({2: loud}, 0.0, 2.0)
-    assert rms(l0) / rms(q0) > 10
+    assert ratio > 10  # 정규화하지 않으면 격차가 그대로
 
 
-def test_normalize_ignores_silence_when_measuring():
-    spoken = sine_frames(5000, 50, t0=0.0)             # 1초 발화
-    padded = spoken + [Frame(1.0 + i * 0.02, make_pcm(0)) for i in range(150)]  # 뒤에 3초 무음
-    a = mix({1: spoken}, 0.0, 1.0, normalize=True)
-    b = mix({1: padded}, 0.0, 4.0, normalize=True)
-    assert abs(rms(a[2000:40000]) - rms(b[2000:40000])) / rms(a[2000:40000]) < 0.05
-
-
-def test_normalize_silent_source_does_not_blow_up():
-    out = mix({1: run_frames(0, 20), 2: run_frames(3, 20)}, 0.0, 0.4, normalize=True)
+def test_silent_source_does_not_blow_up():
+    out = mix({1: run_frames(0, 20), 2: run_frames(3, 20)}, 0.0, 0.4)
     assert np.abs(out).max() < 100
 
 

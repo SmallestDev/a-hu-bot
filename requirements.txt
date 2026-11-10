@@ -1,8 +1,11 @@
 # --- 필수 ---
-discord.py[voice]>=2.7.1     # PyNaCl 포함. 2.7 이상에서 DAVE(음성 E2EE) 송수신 핸드셰이크 지원
-davey>=0.1.4                 # DAVE 프로토콜 구현 (discord.py 가 사용)
+discord.py[voice]>=2.7.1     # PyNaCl 포함. 2.7 이상에서 DAVE(음성 E2EE) 핸드셰이크 지원
+davey>=0.2.0                 # DAVE 프로토콜 구현 (discord.py 가 사용)
 numpy>=1.26
 python-dotenv>=1.0
 discord-ext-voice-recv @ git+https://github.com/jstewart0788/discord-ext-voice-recv-dave.git@4cbbec2
+# TTS (Edge TTS → MP3 → ffmpeg 디코딩 → discord.py 공식 송신 경로)
+edge-tts>=7.2.7
+imageio-ffmpeg               # 호스팅 이미지 ffmpeg 바이너리 (PATH ffmpeg 없을 때 대안)
 # --- 개발/테스트 ---
 pytest>=8.0

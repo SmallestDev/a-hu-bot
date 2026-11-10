@@ -166,7 +166,8 @@ class ClipCog(commands.Cog):
                 log.info("원본 클리핑 감지: %s", hot)
 
             try:
-                samples = await asyncio.to_thread(mix, frames, start, end, normalize=True)
+                # normalize(사람별 볼륨 자동 보정) 모드는 제거됨. 단순 합산 + 단일 헤드룸 게인.
+                samples = await asyncio.to_thread(mix, frames, start, end)
                 path = await exporter.export_clip(
                     samples, cfg.clips_dir, interaction.guild_id,
                     fmt=(format.value if format else "wav"),

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +29,25 @@ def _int(name: str, default: int) -> int:
         return int(raw)
     except ValueError as exc:
         raise ValueError(f"환경변수 {name} 는 정수여야 합니다: {raw!r}") from exc
+
+
+def resolve_ffmpeg() -> str:
+    """실행 가능한 ffmpeg 경로를 반환한다.
+
+    FFMPEG_PATH 환경변수 → PATH 의 ffmpeg → imageio-ffmpeg 번들 바이너리 순서로 탐색한다.
+    Dashcloud 같은 호스팅은 이미지에 ffmpeg 가 없을 수 있으므로 imageio-ffmpeg 를 대안으로 쓴다.
+    """
+    path = os.getenv("FFMPEG_PATH", "").strip()
+    if path:
+        return path
+    if shutil.which("ffmpeg"):
+        return "ffmpeg"
+    try:
+        import imageio_ffmpeg  # type: ignore
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return "ffmpeg"
 
 
 @dataclass(frozen=True)
@@ -67,7 +87,7 @@ class Config:
             dev_guild_id=int(guild) if guild else None,
             clips_dir=(ROOT_DIR / os.getenv("CLIPS_DIR", "clips")).resolve(),
             db_path=db_path,
-            ffmpeg_path=os.getenv("FFMPEG_PATH", "ffmpeg"),
+            ffmpeg_path=resolve_ffmpeg(),
             buffer_seconds=buffer_seconds,
             max_buffer_mb_per_user=_int("MAX_BUFFER_MB_PER_USER", 16),
             max_buffer_mb_total=_int("MAX_BUFFER_MB_TOTAL", 128),
