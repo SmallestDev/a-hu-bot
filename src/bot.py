@@ -16,6 +16,9 @@ from src.database.db import ConsentStore
 
 log = logging.getLogger(__name__)
 
+intents = discord.Intents.default()  # guilds + voice_states + guild_messages.
+intents.message_content = True  # /tts 자동 읽기: 일반 채팅 메시지 content 를 읽기 위해 필요
+
 EXTENSIONS = ("src.commands.voice", "src.commands.consent", "src.commands.clip", "src.commands.tts", "src.commands.soundboard")
 
 
@@ -35,8 +38,6 @@ class GuildSession:
 class ClipBot(commands.Bot):
     def __init__(self, config: Config, store: ConsentStore | None = None,
                  receiver: AudioReceiver | None = None) -> None:
-        intents = discord.Intents.default()  # guilds + voice_states + guild_messages.
-        intents.message_content = True  # /tts 자동 읽기: 일반 채팅 메시지 content 를 읽기 위해 필요
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.config = config
         self.store = store or ConsentStore(config.db_path)
