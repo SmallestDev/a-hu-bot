@@ -4,8 +4,9 @@ davey>=0.2.0                 # DAVE 프로토콜 구현 (discord.py 가 사용)
 numpy>=1.26
 python-dotenv>=1.0
 discord-ext-voice-recv @ git+https://github.com/jstewart0788/discord-ext-voice-recv-dave.git@4cbbec2
-# TTS (Edge TTS → MP3 → ffmpeg 디코딩 → discord.py 공식 송신 경로)
+# TTS (gTTS → MP3 → ffmpeg 디코딩 → discord.py 공식 송신 경로)
 edge-tts>=7.2.7
+gtts>=2.5.4                  # Edge TTS 대안: Google TTS
 imageio-ffmpeg               # 호스팅 이미지 ffmpeg 바이너리 (PATH ffmpeg 없을 때 대안)
 # --- 개발/테스트 ---
 pytest>=8.0
