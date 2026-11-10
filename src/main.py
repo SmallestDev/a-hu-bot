@@ -1,8 +1,15 @@
-"""진입점: python -m src.main"""
+"""진입점: python -m src.main 또는 python src/main.py"""
 from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
+
+# 대시보드 등이 `python src/main.py` 로 직접 실행할 때도 src 패키지를 import 할 수 있게
+# 프로젝트 루트(이 파일의 부모의 부모) 를 sys.path 에 추가한다.
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src.bot import ClipBot
 from src.config import Config
