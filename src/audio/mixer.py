@@ -111,4 +111,6 @@ def mix(frames_by_user: dict[int, list[Frame]], start: float, end: float, *,
     peak = float(np.abs(acc).max()) if acc.size else 0.0
     if peak > ceiling:
         acc *= ceiling / peak
+    # 소프트 클리핑: 천장을 부드럽게 제한해 원본 과입력 시 '사각파 깨짐' 완화
+    acc = np.tanh(acc / ceiling) * ceiling
     return np.clip(np.rint(acc), -32768, 32767).astype(np.int16)

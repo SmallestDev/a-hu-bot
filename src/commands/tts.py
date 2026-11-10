@@ -124,8 +124,13 @@ class TTSCog(commands.Cog):
             # 같은 길드에서는 재생을 순차화해 소리가 겹치지 않게 한다.
             try:
                 await self._say(vc, text)
-            except Exception:
+            except Exception as exc:
                 log.exception("TTS 재생 실패 (guild=%s)", gid)
+                try:
+                    await message.channel.send(
+                        f"⚠️ TTS 재생 실패: {exc}", allowed_mentions=NO_MENTION, delete_after=10)
+                except discord.DiscordException:
+                    pass
 
     # ---- 실제 재생 파이프라인 --------------------------------------------
     async def _say(self, vc: discord.VoiceClient, text: str) -> None:
@@ -164,6 +169,10 @@ class TTSCog(commands.Cog):
         except asyncio.TimeoutError:
             vc.stop()
             raise RuntimeError("TTS 재생이 시간 안에 종료되지 않았습니다")
+        except edge_tts.exceptions.NoAudioReceived:
+            vc.stop()
+            log.error("Edge TTS 에서 오디오를 받지 못했습니다 (호스팅 네트워크 제한 등)")
+            raise RuntimeError("TTS 음성을 생성하지 못했습니다. 호스팅 환경에서 Edge TTS 에 접속할 수 없을 수 있습니다.")
         finally:
             vc.stop()
             if path is not None:
